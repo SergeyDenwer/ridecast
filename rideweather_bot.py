@@ -174,185 +174,126 @@ def get_route_weather(pts_sampled, start_dt: datetime, duration_h: float):
 # ─── Рендер карточки ─────────────────────────────────────────────────────────
 
 def render_card(pts_weather, hourly_series, route_name, start_dt, end_dt, total_km, all_pts=None):
-    """Рисуем итоговую карточку через Cairo."""
+    """Рисуем итоговую карточку через Cairo. Вертикальный макет."""
     try:
         import cairo
     except ImportError:
         return _render_fallback(pts_weather, hourly_series, route_name, start_dt, end_dt, total_km)
 
     # ── Размеры ──────────────────────────────────────────────────────────────
-    W, H     = 900, 680
-    PAD      = 18
-    HEADER_H = 64
+    # Вертикальный макет для телефона
+    W        = 900
+    PAD      = 16
+    GAP      = 12
+    HEADER_H = 68
+    MAP_H    = 480      # карта занимает много места
+    CHART_H  = 200      # каждый график
+    H        = PAD + HEADER_H + GAP + MAP_H + GAP + CHART_H + GAP + CHART_H + PAD
 
     surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, W, H)
     ctx  = cairo.Context(surf)
 
     # ── Цвета ────────────────────────────────────────────────────────────────
-    BG        = (0.10, 0.12, 0.16)
-    CARD_BG   = (0.14, 0.16, 0.22)
-    ACCENT    = (0.96, 0.42, 0.15)   # оранжевый
-    TEXT      = (0.92, 0.92, 0.95)
-    TEXT_DIM  = (0.55, 0.58, 0.65)
-    GRID      = (0.22, 0.25, 0.32)
-    TEMP_C    = (0.35, 0.70, 1.00)
-    PRECIP_C  = (0.25, 0.55, 0.90)
-    CLOUD_C   = (0.60, 0.62, 0.70)
-    WIND_C    = (0.30, 0.85, 0.60)
-    GUST_C    = (1.00, 0.65, 0.20)
+    BG       = (0.10, 0.12, 0.16)
+    CARD_BG  = (0.14, 0.16, 0.22)
+    ACCENT   = (0.96, 0.42, 0.15)
+    TEXT     = (0.92, 0.92, 0.95)
+    TEXT_DIM = (0.55, 0.58, 0.65)
+    GRID     = (0.22, 0.25, 0.32)
+    TEMP_C   = (0.35, 0.70, 1.00)
+    PRECIP_C = (0.25, 0.55, 0.90)
+    CLOUD_C  = (0.60, 0.62, 0.70)
 
-    def set_color(c, alpha=1.0):
-        ctx.set_source_rgba(*c, alpha)
+    def sc(c, a=1.0): ctx.set_source_rgba(*c, a)
 
-    def rounded_rect(x, y, w, h, r=12):
+    def rr(x, y, w, h, r=10):
         ctx.new_sub_path()
-        ctx.arc(x+r, y+r, r, math.pi, 1.5*math.pi)
-        ctx.arc(x+w-r, y+r, r, 1.5*math.pi, 0)
-        ctx.arc(x+w-r, y+h-r, r, 0, 0.5*math.pi)
-        ctx.arc(x+r, y+h-r, r, 0.5*math.pi, math.pi)
+        ctx.arc(x+r,   y+r,   r, math.pi,       1.5*math.pi)
+        ctx.arc(x+w-r, y+r,   r, 1.5*math.pi,   0)
+        ctx.arc(x+w-r, y+h-r, r, 0,              0.5*math.pi)
+        ctx.arc(x+r,   y+h-r, r, 0.5*math.pi,   math.pi)
         ctx.close_path()
 
     # ── Фон ──────────────────────────────────────────────────────────────────
-    set_color(BG)
-    ctx.paint()
+    sc(BG); ctx.paint()
 
     # ── Заголовок ─────────────────────────────────────────────────────────────
-    HEADER_H = 70
-    set_color(CARD_BG)
-    rounded_rect(PAD, 12, W - 2*PAD, HEADER_H, 10)
-    ctx.fill()
+    hx, hy = PAD, PAD
+    hw = W - 2*PAD
+    sc(CARD_BG); rr(hx, hy, hw, HEADER_H); ctx.fill()
+    sc(ACCENT);  ctx.rectangle(hx, hy, 4, HEADER_H); ctx.fill()
 
-    # Акцентная полоса слева
-    set_color(ACCENT)
-    ctx.rectangle(PAD, 12, 4, HEADER_H)
-    ctx.fill()
-
-    # Название маршрута
     ctx.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-    ctx.set_font_size(20)
-    set_color(TEXT)
-    ctx.move_to(PAD + 18, 12 + 30)
-    ctx.show_text(route_name[:50])
+    ctx.set_font_size(22)
+    sc(TEXT); ctx.move_to(hx+18, hy+32); ctx.show_text(route_name[:55])
 
-    # Детали маршрута
-    ctx.set_font_size(13)
-    set_color(TEXT_DIM)
+    ctx.set_font_size(14); sc(TEXT_DIM)
     duration_h = (end_dt - start_dt).total_seconds() / 3600
-    detail = (
-        f"{start_dt.strftime('%d.%m.%Y')}   "
-        f"{start_dt.strftime('%H:%M')} → {end_dt.strftime('%H:%M')}   "
-        f"📏 {total_km:.1f} км   ⏱ {duration_h:.1f} ч"
-    )
-    ctx.move_to(PAD + 18, 12 + 55)
-    ctx.show_text(detail)
+    detail = (f"{start_dt.strftime('%d.%m.%Y')}   "
+              f"{start_dt.strftime('%H:%M')} → {end_dt.strftime('%H:%M')}   "
+              f"□ {total_km:.1f} км   □ {duration_h:.1f} ч")
+    ctx.move_to(hx+18, hy+56); ctx.show_text(detail)
 
-    # ── Макет: левая колонка (карта) + правая колонка (2 графика) ────────────
-    #
-    #  ┌─────────────────────────────────────────────────────────────────────┐
-    #  │  ЗАГОЛОВОК                                                          │
-    #  ├──────────────────────────────────┬──────────────────────────────────┤
-    #  │                                  │  ТЕМПЕРАТУРА                     │
-    #  │  ВЕТЕР НА МАРШРУТЕ               ├──────────────────────────────────┤
-    #  │  (карта занимает всю высоту)     │  ОБЛАЧНОСТЬ / ОСАДКИ             │
-    #  └──────────────────────────────────┴──────────────────────────────────┘
-
-    BODY_Y   = 12 + HEADER_H + 14          # верх контентной зоны
-    BODY_H   = H - BODY_Y - 12             # высота до нижнего края
-    GAP      = 12                           # зазор между блоками
-
-    # Левая колонка — карта
-    LEFT_W   = int((W - 2*PAD - GAP) * 0.52)
-    RIGHT_W  = W - 2*PAD - GAP - LEFT_W
-
-    MAP_X, MAP_Y = PAD, BODY_Y
-    MAP_W2, MAP_H2 = LEFT_W, BODY_H
-
-    set_color(CARD_BG)
-    rounded_rect(MAP_X, MAP_Y, MAP_W2, MAP_H2, 10)
-    ctx.fill()
-
-    ctx.set_font_size(13)
-    set_color(ACCENT)
-    ctx.move_to(MAP_X + 14, MAP_Y + 22)
-    ctx.show_text("ВЕТЕР НА МАРШРУТЕ")
+    # ── Карта ─────────────────────────────────────────────────────────────────
+    cy = hy + HEADER_H + GAP
+    sc(CARD_BG); rr(PAD, cy, W-2*PAD, MAP_H); ctx.fill()
+    ctx.set_font_size(13); sc(ACCENT)
+    ctx.move_to(PAD+14, cy+22); ctx.show_text("ВЕТЕР НА МАРШРУТЕ")
 
     _draw_wind_map(ctx, pts_weather,
-                   MAP_X + 10, MAP_Y + 32, MAP_W2 - 20, MAP_H2 - 42,
-                   ACCENT, TEXT, TEXT_DIM, GRID, WIND_C, GUST_C, all_pts=all_pts)
+                   PAD+10, cy+32, W-2*PAD-20, MAP_H-42,
+                   ACCENT, TEXT, TEXT_DIM, GRID, all_pts=all_pts)
 
-    # Правая колонка
-    RX   = PAD + LEFT_W + GAP
-    RW   = RIGHT_W
-    HALF = (BODY_H - GAP) // 2
-
-    # --- Температура ---
-    set_color(CARD_BG)
-    rounded_rect(RX, BODY_Y, RW, HALF, 10)
-    ctx.fill()
-
-    ctx.set_font_size(13)
-    set_color(ACCENT)
-    ctx.move_to(RX + 14, BODY_Y + 22)
-    ctx.show_text("ТЕМПЕРАТУРА")
-
+    # ── Температура ───────────────────────────────────────────────────────────
+    ty = cy + MAP_H + GAP
+    sc(CARD_BG); rr(PAD, ty, W-2*PAD, CHART_H); ctx.fill()
+    ctx.set_font_size(13); sc(ACCENT)
+    ctx.move_to(PAD+14, ty+22); ctx.show_text("ТЕМПЕРАТУРА")
     _draw_temp_chart(ctx, hourly_series,
-                     RX + 14, BODY_Y + 34, RW - 28, HALF - 48,
+                     PAD+14, ty+34, W-2*PAD-28, CHART_H-50,
                      TEMP_C, TEXT, TEXT_DIM, GRID)
 
-    # --- Облачность / осадки ---
-    PREC_Y2 = BODY_Y + HALF + GAP
-
-    set_color(CARD_BG)
-    rounded_rect(RX, PREC_Y2, RW, HALF, 10)
-    ctx.fill()
-
-    ctx.set_font_size(13)
-    set_color(ACCENT)
-    ctx.move_to(RX + 14, PREC_Y2 + 22)
-    ctx.show_text("ОБЛАЧНОСТЬ / ОСАДКИ")
-
+    # ── Облачность / осадки ───────────────────────────────────────────────────
+    py2 = ty + CHART_H + GAP
+    sc(CARD_BG); rr(PAD, py2, W-2*PAD, CHART_H); ctx.fill()
+    ctx.set_font_size(13); sc(ACCENT)
+    ctx.move_to(PAD+14, py2+22); ctx.show_text("ОБЛАЧНОСТЬ / ОСАДКИ")
     _draw_precip_chart(ctx, hourly_series,
-                       RX + 14, PREC_Y2 + 34, RW - 28, HALF - 48,
+                       PAD+14, py2+34, W-2*PAD-28, CHART_H-50,
                        PRECIP_C, CLOUD_C, TEXT, TEXT_DIM, GRID)
 
-    # ── Экспорт ──────────────────────────────────────────────────────────────
+    # ── Экспорт (PNG без потерь) ──────────────────────────────────────────────
     buf = io.BytesIO()
     surf.write_to_png(buf)
     buf.seek(0)
     return buf
 
 
-def _wind_arrow(ctx, cx, cy, direction_deg, length, color, alpha=0.9):
+def _wind_arrow(ctx, cx, cy, direction_deg, length, color, alpha=0.9, line_w=2.0):
     """Рисует стрелку ветра.
-    direction_deg — метеорологическое направление (ОТКУДА дует).
+    direction_deg — метеорологическое (ОТКУДА дует).
     Стрелка показывает КУДА движется воздух.
     """
-    # Метеорологический 0° = север = вверх на экране.
-    # Переводим в угол от оси Y вверх, по часовой стрелке.
-    # Куда дует = direction + 180.
-    angle = math.radians(direction_deg + 180)   # угол от севера
-    # Вектор направления (dx, dy) в экранных координатах (y вниз)
-    vx =  math.sin(angle)   # east component → вправо
-    vy = -math.cos(angle)   # north component → вверх (экран: вверх = −y)
+    angle = math.radians(direction_deg + 180)
+    vx =  math.sin(angle)
+    vy = -math.cos(angle)
 
-    # Хвост и кончик стрелки
     tail_x = cx - vx * length * 0.5
     tail_y = cy - vy * length * 0.5
     tip_x  = cx + vx * length * 0.5
     tip_y  = cy + vy * length * 0.5
 
     ctx.set_source_rgba(*color, alpha)
-    ctx.set_line_width(2.0)
+    ctx.set_line_width(line_w)
+    ctx.set_line_cap(0)   # cairo.LINE_CAP_BUTT
 
-    # Тело
     ctx.move_to(tail_x, tail_y)
     ctx.line_to(tip_x, tip_y)
     ctx.stroke()
 
-    # Наконечник: два уса под ±35°
     head_len = length * 0.38
     for sign in (+1, -1):
-        a2 = angle + sign * math.radians(145)   # назад от кончика
+        a2 = angle + sign * math.radians(145)
         hx = tip_x + math.sin(a2) * head_len * 0.55
         hy = tip_y - math.cos(a2) * head_len * 0.55
         ctx.move_to(tip_x, tip_y)
@@ -407,97 +348,88 @@ def _pick_zoom(lat_min, lat_max, lon_min, lon_max, px_w, px_h, tile_size=256):
     return 6
 
 
-def _draw_wind_map(ctx, pts_weather, x, y, w, h, accent, text_c, dim_c, grid_c, wind_c, gust_c, all_pts=None):
-    """Рисует карту маршрута с OSM-подложкой и стрелками ветра."""
+def _draw_wind_map(ctx, pts_weather, x, y, w, h, accent, text_c, dim_c, grid_c, all_pts=None):
+    """Карта маршрута с OSM-подложкой и стрелками ветра."""
     import cairo
 
-    n = len(pts_weather)
-    if n == 0:
+    if not pts_weather:
         return
 
-    lats = [p["lat"] for p in pts_weather]
-    lons = [p["lon"] for p in pts_weather]
+    # ── bbox по ВСЕМ точкам трека (для правильного зума и центрирования) ─────
+    track_pts    = all_pts if all_pts else [(p["lat"], p["lon"], 0) for p in pts_weather]
+    track_lats   = [p[0] for p in track_pts]
+    track_lons   = [p[1] for p in track_pts]
 
-    lat_min, lat_max = min(lats), max(lats)
-    lon_min, lon_max = min(lons), max(lons)
+    lat_min, lat_max = min(track_lats), max(track_lats)
+    lon_min, lon_max = min(track_lons), max(track_lons)
 
-    # Добавляем отступ ~15%
-    lat_pad = max((lat_max - lat_min) * 0.20, 0.003)
-    lon_pad = max((lon_max - lon_min) * 0.20, 0.005)
+    # Отступ 15% с каждой стороны
+    lat_pad = max((lat_max - lat_min) * 0.18, 0.004)
+    lon_pad = max((lon_max - lon_min) * 0.18, 0.006)
     lat_min -= lat_pad; lat_max += lat_pad
     lon_min -= lon_pad; lon_max += lon_pad
-
-    lat_span = lat_max - lat_min
-    lon_span = lon_max - lon_min
 
     TILE = 256
     zoom = _pick_zoom(lat_min, lat_max, lon_min, lon_max, w, h)
 
-    # Тайлы, покрывающие bbox
-    tx0, ty0 = _lat_lon_to_tile(lat_max, lon_min, zoom)  # северо-запад
-    tx1, ty1 = _lat_lon_to_tile(lat_min, lon_max, zoom)  # юго-восток
+    # ── Тайлы ────────────────────────────────────────────────────────────────
+    tx0, ty0 = _lat_lon_to_tile(lat_max, lon_min, zoom)   # СЗ
+    tx1, ty1 = _lat_lon_to_tile(lat_min, lon_max, zoom)   # ЮВ
     tx1 = max(tx1, tx0); ty1 = max(ty1, ty0)
 
-    # Скачиваем тайлы и составляем мозаику
-    tiles_x = tx1 - tx0 + 1
-    tiles_y = ty1 - ty0 + 1
-    mosaic_w = tiles_x * TILE
-    mosaic_h = tiles_y * TILE
+    tiles_w = tx1 - tx0 + 1
+    tiles_h = ty1 - ty0 + 1
+    mosaic_w = tiles_w * TILE
+    mosaic_h = tiles_h * TILE
 
-    # Координаты северо-западного угла мозаики в градусах
-    nw_lat, nw_lon = _tile_to_lat_lon(tx0, ty0, zoom)
+    nw_lat, nw_lon = _tile_to_lat_lon(tx0,     ty0,     zoom)
     se_lat, se_lon = _tile_to_lat_lon(tx1 + 1, ty1 + 1, zoom)
 
-    # Собираем мозаику в отдельный ImageSurface
     mosaic = cairo.ImageSurface(cairo.FORMAT_ARGB32, mosaic_w, mosaic_h)
     mc = cairo.Context(mosaic)
+    mc.set_source_rgb(0.13, 0.15, 0.20); mc.paint()
 
-    # Тёмный фон на случай отсутствия тайлов
-    mc.set_source_rgb(0.13, 0.15, 0.20)
-    mc.paint()
-
-    loaded = 0
     for tx in range(tx0, tx1 + 1):
         for ty in range(ty0, ty1 + 1):
             data = _osm_tile(zoom, tx, ty)
             if data:
                 try:
-                    tile_surf = cairo.ImageSurface.create_from_png(io.BytesIO(data))
-                    px = (tx - tx0) * TILE
-                    py = (ty - ty0) * TILE
-                    mc.set_source_surface(tile_surf, px, py)
+                    ts = cairo.ImageSurface.create_from_png(io.BytesIO(data))
+                    mc.set_source_surface(ts, (tx - tx0) * TILE, (ty - ty0) * TILE)
                     mc.paint()
-                    loaded += 1
                 except Exception:
                     pass
 
-    # Затемняем тайлы для читаемости поверх
-    mc.set_source_rgba(0.0, 0.0, 0.0, 0.45)
-    mc.paint()
+    # Лёгкое затемнение для читаемости трека
+    mc.set_source_rgba(0, 0, 0, 0.35); mc.paint()
 
-    # Функция перевода координат → пиксели мозаики
+    # ── Проекция Меркатора: координаты → пиксели мозаики ─────────────────────
+    def merc(la):
+        return math.log(math.tan(math.pi / 4 + math.radians(la) / 2))
+
+    merc_nw = merc(nw_lat)
+    merc_se = merc(se_lat)
+
     def geo_to_mosaic(lat, lon):
-        # Используем проекцию Меркатора как OSM
-        n_tiles = 2 ** zoom
         px_ = (lon - nw_lon) / (se_lon - nw_lon) * mosaic_w
-        # lat → меркатор
-        def merc_y(la):
-            la_r = math.radians(la)
-            return math.log(math.tan(math.pi/4 + la_r/2))
-        merc_nw = merc_y(nw_lat)
-        merc_se = merc_y(se_lat)
-        py_ = (merc_nw - merc_y(lat)) / (merc_nw - merc_se) * mosaic_h
+        py_ = (merc_nw - merc(lat)) / (merc_nw - merc_se) * mosaic_h
         return px_, py_
 
-    # Масштаб: вписываем мозаику в область (x, y, w, h)
+    # ── Центрируем мозаику в области (x, y, w, h) ────────────────────────────
+    # Масштаб: вписываем мозаику целиком
     scale = min(w / mosaic_w, h / mosaic_h)
     disp_w = mosaic_w * scale
     disp_h = mosaic_h * scale
     ox = x + (w - disp_w) / 2
     oy = y + (h - disp_h) / 2
 
-    # Вставляем мозаику в основной контекст
+    # Округляем до пикселя — убирает субпиксельное дрожание
+    ox = round(ox); oy = round(oy)
+
     ctx.save()
+    # Клиппируем по области блока
+    ctx.rectangle(x, y, w, h)
+    ctx.clip()
     ctx.translate(ox, oy)
     ctx.scale(scale, scale)
     ctx.set_source_surface(mosaic, 0, 0)
@@ -508,72 +440,68 @@ def _draw_wind_map(ctx, pts_weather, x, y, w, h, accent, text_c, dim_c, grid_c, 
         mx, my = geo_to_mosaic(lat, lon)
         return ox + mx * scale, oy + my * scale
 
-    # ── Трек — сначала тень, потом линия ──────────────────────────────────────
-    # Все точки трека (не только sampled)
-    track_pts = all_pts if all_pts else pts_weather
-    track_coords = [(p[0], p[1]) for p in track_pts] if all_pts else [(p["lat"], p["lon"]) for p in track_pts]
+    # ── Трек: тень + линия ───────────────────────────────────────────────────
+    track_coords = [(p[0], p[1]) for p in track_pts]
 
-    ctx.set_source_rgba(0, 0, 0, 0.5)
-    ctx.set_line_width(4.0)
+    ctx.save()
+    ctx.rectangle(x, y, w, h); ctx.clip()
+
+    # тень
+    ctx.set_source_rgba(0, 0, 0, 0.55)
+    ctx.set_line_width(5.0)
+    ctx.set_line_join(cairo.LINE_JOIN_ROUND)
+    ctx.set_line_cap(cairo.LINE_CAP_ROUND)
     ctx.move_to(*to_px(*track_coords[0]))
-    for coord in track_coords[1:]:
-        ctx.line_to(*to_px(*coord))
+    for c in track_coords[1:]: ctx.line_to(*to_px(*c))
     ctx.stroke()
 
-    ctx.set_source_rgba(*accent, 0.9)
-    ctx.set_line_width(2.5)
+    # линия
+    ctx.set_source_rgba(*accent, 0.92)
+    ctx.set_line_width(2.8)
     ctx.move_to(*to_px(*track_coords[0]))
-    for coord in track_coords[1:]:
-        ctx.line_to(*to_px(*coord))
+    for c in track_coords[1:]: ctx.line_to(*to_px(*c))
     ctx.stroke()
 
-    # ── Стрелки ветра ─────────────────────────────────────────────────────────
-    winds = [p["wind_spd"] for p in pts_weather]
-    max_wind = max(max(winds), 1)
-
+    # ── Стрелки ветра (чёрные, два размера) ──────────────────────────────────
+    # Маленькая если max(wind_spd, wind_gust) <= 10 м/с, иначе большая
     for p in pts_weather:
         px, py = to_px(p["lat"], p["lon"])
-        spd = p["wind_spd"]
-        arrow_len = 18 + (spd / max_wind) * 16
+        max_spd = max(p["wind_spd"], p["wind_gust"])
+        # Размер соразмерен карте: ~2% от меньшей стороны области
+        base = min(w, h) * 0.022
+        arrow_len = base if max_spd <= 10 else base * 1.7
 
-        if spd < 3:
-            c = (0.3, 0.92, 0.50)
-        elif spd < 7:
-            c = (1.0, 0.82, 0.20)
-        else:
-            c = (1.0, 0.32, 0.22)
-
-        _wind_arrow(ctx, px, py, p["wind_dir"], arrow_len, c, alpha=0.95)
-
-        ctx.set_source_rgba(*c, 0.9)
-        ctx.arc(px, py, 3, 0, 2 * math.pi)
-        ctx.fill()
+        _wind_arrow(ctx, px, py, p["wind_dir"], arrow_len,
+                    color=(0, 0, 0), alpha=1.0, line_w=2.2)
 
     # ── Маркеры старт / финиш ─────────────────────────────────────────────────
-    sx, sy = to_px(pts_weather[0]["lat"],  pts_weather[0]["lon"])
-    ex, ey = to_px(pts_weather[-1]["lat"], pts_weather[-1]["lon"])
-
-    for mx, my, label in [(sx, sy, "● старт"), (ex, ey, "■ финиш")]:
-        # тень
-        ctx.set_source_rgba(0, 0, 0, 0.7)
-        ctx.arc(mx, my, 7, 0, 2 * math.pi); ctx.fill()
-        # кружок
+    for (lat, lon), label in [
+        ((pts_weather[0]["lat"],  pts_weather[0]["lon"]),  "старт"),
+        ((pts_weather[-1]["lat"], pts_weather[-1]["lon"]), "финиш"),
+    ]:
+        px, py = to_px(lat, lon)
+        # Тень
+        ctx.set_source_rgba(0, 0, 0, 0.65)
+        ctx.arc(px, py, 8, 0, 2*math.pi); ctx.fill()
+        # Круг
         ctx.set_source_rgba(*accent, 1.0)
-        ctx.arc(mx, my, 5, 0, 2 * math.pi); ctx.fill()
-        # подпись
-        ctx.set_font_size(11)
-        ctx.set_source_rgba(0, 0, 0, 0.7)
-        ctx.move_to(mx + 9, my + 5); ctx.show_text(label)
-        ctx.set_source_rgba(*text_c, 0.95)
-        ctx.move_to(mx + 8, my + 4); ctx.show_text(label)
+        ctx.arc(px, py, 6, 0, 2*math.pi); ctx.fill()
+        # Подпись с тенью
+        ctx.set_font_size(12)
+        ctx.set_source_rgba(0, 0, 0, 0.75)
+        ctx.move_to(px + 10, py + 5); ctx.show_text(label)
+        ctx.set_source_rgba(1, 1, 1, 0.95)
+        ctx.move_to(px + 9,  py + 4); ctx.show_text(label)
 
-    # Копирайт OSM (обязательно по условиям лицензии)
+    ctx.restore()
+
+    # Копирайт OSM
     ctx.set_font_size(9)
-    ctx.set_source_rgba(0, 0, 0, 0.55)
-    ctx.move_to(x + w - 135, y + h - 3)
+    ctx.set_source_rgba(0, 0, 0, 0.5)
+    ctx.move_to(x + w - 174, y + h - 3)
     ctx.show_text("© OpenStreetMap contributors")
-    ctx.set_source_rgba(1, 1, 1, 0.55)
-    ctx.move_to(x + w - 136, y + h - 4)
+    ctx.set_source_rgba(1, 1, 1, 0.5)
+    ctx.move_to(x + w - 175, y + h - 4)
     ctx.show_text("© OpenStreetMap contributors")
 
 
