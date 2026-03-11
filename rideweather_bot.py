@@ -173,7 +173,7 @@ def get_route_weather(pts_sampled, start_dt: datetime, duration_h: float):
 
 # ─── Рендер карточки ─────────────────────────────────────────────────────────
 
-def render_card(pts_weather, hourly_series, route_name, start_dt, end_dt, total_km):
+def render_card(pts_weather, hourly_series, route_name, start_dt, end_dt, total_km, all_pts=None):
     """Рисуем итоговую карточку через Cairo."""
     try:
         import cairo
@@ -263,7 +263,7 @@ def render_card(pts_weather, hourly_series, route_name, start_dt, end_dt, total_
     ctx.show_text("ВЕТЕР НА МАРШРУТЕ")
 
     _draw_wind_map(ctx, pts_weather, MAP_X + 14, MAP_Y + 34, MAP_W - 28, MAP_H - 48,
-                   ACCENT, TEXT, TEXT_DIM, GRID, WIND_C, GUST_C)
+                   ACCENT, TEXT, TEXT_DIM, GRID, WIND_C, GUST_C, all_pts=all_pts)
 
     # ── Правая колонка: 2 графика ─────────────────────────────────────────────
     RX = MAP_X + MAP_W + 18
@@ -319,37 +319,89 @@ def render_card(pts_weather, hourly_series, route_name, start_dt, end_dt, total_
 
 
 def _wind_arrow(ctx, cx, cy, direction_deg, length, color, alpha=0.9):
-    """Рисует стрелку ветра (направление ОТ куда дует → противоположно метеорологическому)."""
-    import cairo
-    # В метеорологии direction — откуда дует. Рисуем стрелку В сторону движения воздуха.
-    angle = math.radians(direction_deg + 180)
-    dx = math.sin(angle) * length
-    dy = -math.cos(angle) * length
+    """Рисует стрелку ветра.
+    direction_deg — метеорологическое направление (ОТКУДА дует).
+    Стрелка показывает КУДА движется воздух.
+    """
+    # Метеорологический 0° = север = вверх на экране.
+    # Переводим в угол от оси Y вверх, по часовой стрелке.
+    # Куда дует = direction + 180.
+    angle = math.radians(direction_deg + 180)   # угол от севера
+    # Вектор направления (dx, dy) в экранных координатах (y вниз)
+    vx =  math.sin(angle)   # east component → вправо
+    vy = -math.cos(angle)   # north component → вверх (экран: вверх = −y)
+
+    # Хвост и кончик стрелки
+    tail_x = cx - vx * length * 0.5
+    tail_y = cy - vy * length * 0.5
+    tip_x  = cx + vx * length * 0.5
+    tip_y  = cy + vy * length * 0.5
 
     ctx.set_source_rgba(*color, alpha)
     ctx.set_line_width(2.0)
 
-    # Тело стрелки
-    ctx.move_to(cx - dx * 0.5, cy - dy * 0.5)
-    ctx.line_to(cx + dx * 0.5, cy + dy * 0.5)
+    # Тело
+    ctx.move_to(tail_x, tail_y)
+    ctx.line_to(tip_x, tip_y)
     ctx.stroke()
 
-    # Наконечник
-    tip_x = cx + dx * 0.5
-    tip_y = cy + dy * 0.5
-    head_len = length * 0.35
-    head_angle = 0.45
-    ctx.set_source_rgba(*color, alpha)
+    # Наконечник: два уса под ±35°
+    head_len = length * 0.38
     for sign in (+1, -1):
-        hx = tip_x - dx * 0.5 * head_len / length + math.cos(angle + sign * head_angle) * head_len * 0.6
-        hy = tip_y - dy * 0.5 * head_len / length + math.sin(angle + sign * head_angle) * head_len * 0.6
+        a2 = angle + sign * math.radians(145)   # назад от кончика
+        hx = tip_x + math.sin(a2) * head_len * 0.55
+        hy = tip_y - math.cos(a2) * head_len * 0.55
         ctx.move_to(tip_x, tip_y)
         ctx.line_to(hx, hy)
         ctx.stroke()
 
 
-def _draw_wind_map(ctx, pts_weather, x, y, w, h, accent, text_c, dim_c, grid_c, wind_c, gust_c):
-    """Рисует упрощённый профиль маршрута со стрелками ветра."""
+def _osm_tile(z, x_tile, y_tile):
+    """Скачивает один OSM тайл, возвращает bytes или None."""
+    url = f"https://tile.openstreetmap.org/{z}/{x_tile}/{y_tile}.png"
+    headers = {"User-Agent": "RideWeatherBot/1.0 (telegram bot)"}
+    try:
+        r = requests.get(url, headers=headers, timeout=8)
+        if r.status_code == 200:
+            return r.content
+    except Exception:
+        pass
+    return None
+
+
+def _lat_lon_to_tile(lat, lon, zoom):
+    """Номер тайла OSM для заданных координат."""
+    n = 2 ** zoom
+    x = int((lon + 180) / 360 * n)
+    lat_r = math.radians(lat)
+    y = int((1 - math.log(math.tan(lat_r) + 1 / math.cos(lat_r)) / math.pi) / 2 * n)
+    return x, y
+
+
+def _tile_to_lat_lon(x_tile, y_tile, zoom):
+    """Координаты северо-западного угла тайла."""
+    n = 2 ** zoom
+    lon = x_tile / n * 360 - 180
+    lat_r = math.atan(math.sinh(math.pi * (1 - 2 * y_tile / n)))
+    lat = math.degrees(lat_r)
+    return lat, lon
+
+
+def _pick_zoom(lat_span, lon_span, px_w, px_h, tile_size=256):
+    """Подбираем зум чтобы маршрут занял ~70% области."""
+    for z in range(16, 7, -1):
+        n = 2 ** z
+        # сколько пикселей занимает lat_span / lon_span при этом зуме
+        px_lon = lon_span / 360 * n * tile_size
+        mid_lat_r = math.radians(0)  # упрощение — достаточно
+        px_lat = lat_span / 360 * n * tile_size
+        if px_lon < px_w * 0.75 and px_lat < px_h * 0.75:
+            return z
+    return 9
+
+
+def _draw_wind_map(ctx, pts_weather, x, y, w, h, accent, text_c, dim_c, grid_c, wind_c, gust_c, all_pts=None):
+    """Рисует карту маршрута с OSM-подложкой и стрелками ветра."""
     import cairo
 
     n = len(pts_weather)
@@ -358,84 +410,164 @@ def _draw_wind_map(ctx, pts_weather, x, y, w, h, accent, text_c, dim_c, grid_c, 
 
     lats = [p["lat"] for p in pts_weather]
     lons = [p["lon"] for p in pts_weather]
-    dists = [p["dist_km"] for p in pts_weather]
-    elevs = [p["elev"] for p in pts_weather]
 
     lat_min, lat_max = min(lats), max(lats)
     lon_min, lon_max = min(lons), max(lons)
-    lat_span = max(lat_max - lat_min, 0.01)
-    lon_span = max(lon_max - lon_min, 0.01)
 
-    # Нормируем по сторонам с сохранением пропорций
-    aspect = lon_span / lat_span * math.cos(math.radians((lat_min + lat_max) / 2))
-    if aspect > w / h:
-        map_w, map_h = w, w / aspect
-        ox, oy = x, y + (h - map_h) / 2
-    else:
-        map_w, map_h = h * aspect, h
-        ox, oy = x + (w - map_w) / 2, y
+    # Добавляем отступ ~15%
+    lat_pad = max((lat_max - lat_min) * 0.20, 0.003)
+    lon_pad = max((lon_max - lon_min) * 0.20, 0.005)
+    lat_min -= lat_pad; lat_max += lat_pad
+    lon_min -= lon_pad; lon_max += lon_pad
+
+    lat_span = lat_max - lat_min
+    lon_span = lon_max - lon_min
+
+    TILE = 256
+    zoom = _pick_zoom(lat_span, lon_span, w, h)
+
+    # Тайлы, покрывающие bbox
+    tx0, ty0 = _lat_lon_to_tile(lat_max, lon_min, zoom)  # северо-запад
+    tx1, ty1 = _lat_lon_to_tile(lat_min, lon_max, zoom)  # юго-восток
+    tx1 = max(tx1, tx0); ty1 = max(ty1, ty0)
+
+    # Скачиваем тайлы и составляем мозаику
+    tiles_x = tx1 - tx0 + 1
+    tiles_y = ty1 - ty0 + 1
+    mosaic_w = tiles_x * TILE
+    mosaic_h = tiles_y * TILE
+
+    # Координаты северо-западного угла мозаики в градусах
+    nw_lat, nw_lon = _tile_to_lat_lon(tx0, ty0, zoom)
+    se_lat, se_lon = _tile_to_lat_lon(tx1 + 1, ty1 + 1, zoom)
+
+    # Собираем мозаику в отдельный ImageSurface
+    mosaic = cairo.ImageSurface(cairo.FORMAT_ARGB32, mosaic_w, mosaic_h)
+    mc = cairo.Context(mosaic)
+
+    # Тёмный фон на случай отсутствия тайлов
+    mc.set_source_rgb(0.13, 0.15, 0.20)
+    mc.paint()
+
+    loaded = 0
+    for tx in range(tx0, tx1 + 1):
+        for ty in range(ty0, ty1 + 1):
+            data = _osm_tile(zoom, tx, ty)
+            if data:
+                try:
+                    tile_surf = cairo.ImageSurface.create_from_png(io.BytesIO(data))
+                    px = (tx - tx0) * TILE
+                    py = (ty - ty0) * TILE
+                    mc.set_source_surface(tile_surf, px, py)
+                    mc.paint()
+                    loaded += 1
+                except Exception:
+                    pass
+
+    # Затемняем тайлы для читаемости поверх
+    mc.set_source_rgba(0.0, 0.0, 0.0, 0.45)
+    mc.paint()
+
+    # Функция перевода координат → пиксели мозаики
+    def geo_to_mosaic(lat, lon):
+        # Используем проекцию Меркатора как OSM
+        n_tiles = 2 ** zoom
+        px_ = (lon - nw_lon) / (se_lon - nw_lon) * mosaic_w
+        # lat → меркатор
+        def merc_y(la):
+            la_r = math.radians(la)
+            return math.log(math.tan(math.pi/4 + la_r/2))
+        merc_nw = merc_y(nw_lat)
+        merc_se = merc_y(se_lat)
+        py_ = (merc_nw - merc_y(lat)) / (merc_nw - merc_se) * mosaic_h
+        return px_, py_
+
+    # Масштаб: вписываем мозаику в область (x, y, w, h)
+    scale = min(w / mosaic_w, h / mosaic_h)
+    disp_w = mosaic_w * scale
+    disp_h = mosaic_h * scale
+    ox = x + (w - disp_w) / 2
+    oy = y + (h - disp_h) / 2
+
+    # Вставляем мозаику в основной контекст
+    ctx.save()
+    ctx.translate(ox, oy)
+    ctx.scale(scale, scale)
+    ctx.set_source_surface(mosaic, 0, 0)
+    ctx.paint()
+    ctx.restore()
 
     def to_px(lat, lon):
-        px = ox + (lon - lon_min) / lon_span * map_w
-        py = oy + map_h - (lat - lat_min) / lat_span * map_h
-        return px, py
+        mx, my = geo_to_mosaic(lat, lon)
+        return ox + mx * scale, oy + my * scale
 
-    # Фоновая сетка
-    ctx.set_source_rgba(*grid_c, 0.3)
-    ctx.set_line_width(0.5)
-    for i in range(4):
-        xi = ox + map_w * i / 3
-        ctx.move_to(xi, oy)
-        ctx.line_to(xi, oy + map_h)
-        ctx.stroke()
+    # ── Трек — сначала тень, потом линия ──────────────────────────────────────
+    # Все точки трека (не только sampled)
+    track_pts = all_pts if all_pts else pts_weather
+    track_coords = [(p[0], p[1]) for p in track_pts] if all_pts else [(p["lat"], p["lon"]) for p in track_pts]
 
-    # Линия трека
-    ctx.set_source_rgba(*accent, 0.5)
-    ctx.set_line_width(1.5)
-    ctx.set_dash([4, 4])
-    ctx.move_to(*to_px(pts_weather[0]["lat"], pts_weather[0]["lon"]))
-    for p in pts_weather[1:]:
-        ctx.line_to(*to_px(p["lat"], p["lon"]))
+    ctx.set_source_rgba(0, 0, 0, 0.5)
+    ctx.set_line_width(4.0)
+    ctx.move_to(*to_px(*track_coords[0]))
+    for coord in track_coords[1:]:
+        ctx.line_to(*to_px(*coord))
     ctx.stroke()
-    ctx.set_dash([])
 
-    # Стрелки ветра и точки
+    ctx.set_source_rgba(*accent, 0.9)
+    ctx.set_line_width(2.5)
+    ctx.move_to(*to_px(*track_coords[0]))
+    for coord in track_coords[1:]:
+        ctx.line_to(*to_px(*coord))
+    ctx.stroke()
+
+    # ── Стрелки ветра ─────────────────────────────────────────────────────────
     winds = [p["wind_spd"] for p in pts_weather]
-    max_wind = max(winds) if winds else 1
-    max_wind = max(max_wind, 1)
+    max_wind = max(max(winds), 1)
 
     for p in pts_weather:
         px, py = to_px(p["lat"], p["lon"])
         spd = p["wind_spd"]
-        arrow_len = 16 + (spd / max_wind) * 20
+        arrow_len = 18 + (spd / max_wind) * 16
 
-        # Цвет по скорости ветра
         if spd < 3:
-            c = (0.3, 0.85, 0.45)
+            c = (0.3, 0.92, 0.50)
         elif spd < 7:
-            c = (1.0, 0.80, 0.20)
+            c = (1.0, 0.82, 0.20)
         else:
-            c = (1.0, 0.35, 0.25)
+            c = (1.0, 0.32, 0.22)
 
-        _wind_arrow(ctx, px, py, p["wind_dir"], arrow_len, c, alpha=0.92)
+        _wind_arrow(ctx, px, py, p["wind_dir"], arrow_len, c, alpha=0.95)
 
-        # Точка
         ctx.set_source_rgba(*c, 0.9)
         ctx.arc(px, py, 3, 0, 2 * math.pi)
         ctx.fill()
 
-    # Метки старт/финиш
-    ctx.set_font_size(11)
-    sx, sy = to_px(pts_weather[0]["lat"], pts_weather[0]["lon"])
+    # ── Маркеры старт / финиш ─────────────────────────────────────────────────
+    sx, sy = to_px(pts_weather[0]["lat"],  pts_weather[0]["lon"])
     ex, ey = to_px(pts_weather[-1]["lat"], pts_weather[-1]["lon"])
 
-    ctx.set_source_rgba(*accent, 1.0)
-    ctx.arc(sx, sy, 5, 0, 2 * math.pi); ctx.fill()
-    ctx.arc(ex, ey, 5, 0, 2 * math.pi); ctx.fill()
+    for mx, my, label in [(sx, sy, "● старт"), (ex, ey, "■ финиш")]:
+        # тень
+        ctx.set_source_rgba(0, 0, 0, 0.7)
+        ctx.arc(mx, my, 7, 0, 2 * math.pi); ctx.fill()
+        # кружок
+        ctx.set_source_rgba(*accent, 1.0)
+        ctx.arc(mx, my, 5, 0, 2 * math.pi); ctx.fill()
+        # подпись
+        ctx.set_font_size(11)
+        ctx.set_source_rgba(0, 0, 0, 0.7)
+        ctx.move_to(mx + 9, my + 5); ctx.show_text(label)
+        ctx.set_source_rgba(*text_c, 0.95)
+        ctx.move_to(mx + 8, my + 4); ctx.show_text(label)
 
-    ctx.set_source_rgba(*text_c, 0.9)
-    ctx.move_to(sx + 7, sy + 4); ctx.show_text("▶ старт")
-    ctx.move_to(ex + 7, ey + 4); ctx.show_text("⬛ финиш")
+    # Копирайт OSM (обязательно по условиям лицензии)
+    ctx.set_font_size(9)
+    ctx.set_source_rgba(0, 0, 0, 0.55)
+    ctx.move_to(x + w - 135, y + h - 3)
+    ctx.show_text("© OpenStreetMap contributors")
+    ctx.set_source_rgba(1, 1, 1, 0.55)
+    ctx.move_to(x + w - 136, y + h - 4)
+    ctx.show_text("© OpenStreetMap contributors")
 
 
 def _chart_axes(ctx, x, y, w, h, values, time_labels, y_unit, text_c, dim_c, grid_c, n_grid=4):
@@ -877,6 +1009,7 @@ async def handle_speed(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pts_weather, hourly_series,
             context.user_data["route_name"],
             start_dt, end_dt, total_km,
+            all_pts=pts,
         )
 
         try:
