@@ -415,21 +415,42 @@ def _draw_wind_map(ctx, pts_weather, x, y, w, h, accent, text_c, dim_c, grid_c, 
         py_ = (merc_nw - merc(lat)) / (merc_nw - merc_se) * mosaic_h
         return px_, py_
 
-    # ── Центрируем мозаику в области (x, y, w, h) ────────────────────────────
-    # Масштаб: вписываем мозаику целиком
-    scale = min(w / mosaic_w, h / mosaic_h)
-    disp_w = mosaic_w * scale
-    disp_h = mosaic_h * scale
-    ox = x + (w - disp_w) / 2
-    oy = y + (h - disp_h) / 2
+    # ── Центрируем на bbox маршрута, а не на мозаике ─────────────────────────
+    # Пиксели bbox маршрута в координатах мозаики
+    def merc(la):
+        return math.log(math.tan(math.pi / 4 + math.radians(la) / 2))
 
-    # Округляем до пикселя — убирает субпиксельное дрожание
-    ox = round(ox); oy = round(oy)
+    merc_nw = merc(nw_lat)
+    merc_se = merc(se_lat)
+
+    def geo_to_mosaic(lat, lon):
+        px_ = (lon - nw_lon) / (se_lon - nw_lon) * mosaic_w
+        py_ = (merc_nw - merc(lat)) / (merc_nw - merc_se) * mosaic_h
+        return px_, py_
+
+    # Bbox маршрута (без паддинга) в пикселях мозаики
+    raw_lats = [p[0] for p in track_pts]
+    raw_lons = [p[1] for p in track_pts]
+    bbox_x0, bbox_y0 = geo_to_mosaic(max(raw_lats), min(raw_lons))
+    bbox_x1, bbox_y1 = geo_to_mosaic(min(raw_lats), max(raw_lons))
+    bbox_cx = (bbox_x0 + bbox_x1) / 2   # центр bbox в пикселях мозаики
+    bbox_cy = (bbox_y0 + bbox_y1) / 2
+    bbox_pw = abs(bbox_x1 - bbox_x0)    # ширина bbox в пикселях мозаики
+    bbox_ph = abs(bbox_y1 - bbox_y0)    # высота bbox в пикселях мозаики
+
+    # Масштаб: bbox занимает 68% меньшей стороны блока
+    if bbox_pw < 1: bbox_pw = 1
+    if bbox_ph < 1: bbox_ph = 1
+    scale_by_w = (w * 0.72) / bbox_pw
+    scale_by_h = (h * 0.72) / bbox_ph
+    scale = min(scale_by_w, scale_by_h)
+
+    # Смещение: bbox маршрута в центре блока
+    ox = x + w / 2 - bbox_cx * scale
+    oy = y + h / 2 - bbox_cy * scale
 
     ctx.save()
-    # Клиппируем по области блока
-    ctx.rectangle(x, y, w, h)
-    ctx.clip()
+    ctx.rectangle(x, y, w, h); ctx.clip()
     ctx.translate(ox, oy)
     ctx.scale(scale, scale)
     ctx.set_source_surface(mosaic, 0, 0)
@@ -467,12 +488,12 @@ def _draw_wind_map(ctx, pts_weather, x, y, w, h, accent, text_c, dim_c, grid_c, 
     for p in pts_weather:
         px, py = to_px(p["lat"], p["lon"])
         max_spd = max(p["wind_spd"], p["wind_gust"])
-        # Размер соразмерен карте: ~2% от меньшей стороны области
-        base = min(w, h) * 0.022
+        # ~4.5% от меньшей стороны — в два раза крупнее прежнего
+        base = min(w, h) * 0.045
         arrow_len = base if max_spd <= 10 else base * 1.7
 
         _wind_arrow(ctx, px, py, p["wind_dir"], arrow_len,
-                    color=(0, 0, 0), alpha=1.0, line_w=2.2)
+                    color=(0, 0, 0), alpha=1.0, line_w=2.5)
 
     # ── Маркеры старт / финиш ─────────────────────────────────────────────────
     for (lat, lon), label in [
