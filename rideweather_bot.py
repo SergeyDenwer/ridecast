@@ -181,11 +181,9 @@ def render_card(pts_weather, hourly_series, route_name, start_dt, end_dt, total_
         return _render_fallback(pts_weather, hourly_series, route_name, start_dt, end_dt, total_km)
 
     # ── Размеры ──────────────────────────────────────────────────────────────
-    W, H = 900, 700
-    PAD  = 40
-    CHART_H = 180
-    MAP_H   = 300
-    MAP_W   = 420
+    W, H     = 900, 680
+    PAD      = 18
+    HEADER_H = 64
 
     surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, W, H)
     ctx  = cairo.Context(surf)
@@ -248,68 +246,74 @@ def render_card(pts_weather, hourly_series, route_name, start_dt, end_dt, total_
     ctx.move_to(PAD + 18, 12 + 55)
     ctx.show_text(detail)
 
-    # ── Карта ветра ───────────────────────────────────────────────────────────
-    MAP_X = PAD
-    MAP_Y = 12 + HEADER_H + 14
+    # ── Макет: левая колонка (карта) + правая колонка (2 графика) ────────────
+    #
+    #  ┌─────────────────────────────────────────────────────────────────────┐
+    #  │  ЗАГОЛОВОК                                                          │
+    #  ├──────────────────────────────────┬──────────────────────────────────┤
+    #  │                                  │  ТЕМПЕРАТУРА                     │
+    #  │  ВЕТЕР НА МАРШРУТЕ               ├──────────────────────────────────┤
+    #  │  (карта занимает всю высоту)     │  ОБЛАЧНОСТЬ / ОСАДКИ             │
+    #  └──────────────────────────────────┴──────────────────────────────────┘
+
+    BODY_Y   = 12 + HEADER_H + 14          # верх контентной зоны
+    BODY_H   = H - BODY_Y - 12             # высота до нижнего края
+    GAP      = 12                           # зазор между блоками
+
+    # Левая колонка — карта
+    LEFT_W   = int((W - 2*PAD - GAP) * 0.52)
+    RIGHT_W  = W - 2*PAD - GAP - LEFT_W
+
+    MAP_X, MAP_Y = PAD, BODY_Y
+    MAP_W2, MAP_H2 = LEFT_W, BODY_H
 
     set_color(CARD_BG)
-    rounded_rect(MAP_X, MAP_Y, MAP_W, MAP_H, 10)
+    rounded_rect(MAP_X, MAP_Y, MAP_W2, MAP_H2, 10)
     ctx.fill()
 
-    # Заголовок секции
     ctx.set_font_size(13)
     set_color(ACCENT)
     ctx.move_to(MAP_X + 14, MAP_Y + 22)
     ctx.show_text("ВЕТЕР НА МАРШРУТЕ")
 
-    _draw_wind_map(ctx, pts_weather, MAP_X + 14, MAP_Y + 34, MAP_W - 28, MAP_H - 48,
+    _draw_wind_map(ctx, pts_weather,
+                   MAP_X + 10, MAP_Y + 32, MAP_W2 - 20, MAP_H2 - 42,
                    ACCENT, TEXT, TEXT_DIM, GRID, WIND_C, GUST_C, all_pts=all_pts)
 
-    # ── Правая колонка: 2 графика ─────────────────────────────────────────────
-    RX = MAP_X + MAP_W + 18
-    RW = W - PAD - RX
+    # Правая колонка
+    RX   = PAD + LEFT_W + GAP
+    RW   = RIGHT_W
+    HALF = (BODY_H - GAP) // 2
 
-    # --- График температуры ---
-    TEMP_Y = MAP_Y
-    TEMP_BLOCK_H = (MAP_H - 12) // 2
-
+    # --- Температура ---
     set_color(CARD_BG)
-    rounded_rect(RX, TEMP_Y, RW, TEMP_BLOCK_H, 10)
+    rounded_rect(RX, BODY_Y, RW, HALF, 10)
     ctx.fill()
 
     ctx.set_font_size(13)
     set_color(ACCENT)
-    ctx.move_to(RX + 14, TEMP_Y + 22)
+    ctx.move_to(RX + 14, BODY_Y + 22)
     ctx.show_text("ТЕМПЕРАТУРА")
 
-    _draw_temp_chart(ctx, hourly_series, RX + 14, TEMP_Y + 34, RW - 28, TEMP_BLOCK_H - 48,
+    _draw_temp_chart(ctx, hourly_series,
+                     RX + 14, BODY_Y + 34, RW - 28, HALF - 48,
                      TEMP_C, TEXT, TEXT_DIM, GRID)
 
-    # --- График осадков/облачности ---
-    PREC_Y = TEMP_Y + TEMP_BLOCK_H + 12
+    # --- Облачность / осадки ---
+    PREC_Y2 = BODY_Y + HALF + GAP
 
     set_color(CARD_BG)
-    rounded_rect(RX, PREC_Y, RW, TEMP_BLOCK_H, 10)
+    rounded_rect(RX, PREC_Y2, RW, HALF, 10)
     ctx.fill()
 
     ctx.set_font_size(13)
     set_color(ACCENT)
-    ctx.move_to(RX + 14, PREC_Y + 22)
+    ctx.move_to(RX + 14, PREC_Y2 + 22)
     ctx.show_text("ОБЛАЧНОСТЬ / ОСАДКИ")
 
-    _draw_precip_chart(ctx, hourly_series, RX + 14, PREC_Y + 34, RW - 28, TEMP_BLOCK_H - 48,
+    _draw_precip_chart(ctx, hourly_series,
+                       RX + 14, PREC_Y2 + 34, RW - 28, HALF - 48,
                        PRECIP_C, CLOUD_C, TEXT, TEXT_DIM, GRID)
-
-    # ── Нижняя полоска с легендой ветра ───────────────────────────────────────
-    LEG_Y = MAP_Y + MAP_H + 12
-    LEG_H = H - LEG_Y - 12
-
-    set_color(CARD_BG)
-    rounded_rect(PAD, LEG_Y, W - 2*PAD, LEG_H, 10)
-    ctx.fill()
-
-    _draw_wind_legend(ctx, pts_weather, PAD + 14, LEG_Y, W - 2*PAD - 28, LEG_H,
-                      TEXT, TEXT_DIM, WIND_C, GUST_C, ACCENT)
 
     # ── Экспорт ──────────────────────────────────────────────────────────────
     buf = io.BytesIO()
@@ -387,17 +391,20 @@ def _tile_to_lat_lon(x_tile, y_tile, zoom):
     return lat, lon
 
 
-def _pick_zoom(lat_span, lon_span, px_w, px_h, tile_size=256):
-    """Подбираем зум чтобы маршрут занял ~70% области."""
-    for z in range(16, 7, -1):
+def _pick_zoom(lat_min, lat_max, lon_min, lon_max, px_w, px_h, tile_size=256):
+    """Подбираем зум так чтобы bbox занимал ~65% меньшей стороны области."""
+    for z in range(17, 5, -1):
         n = 2 ** z
-        # сколько пикселей занимает lat_span / lon_span при этом зуме
-        px_lon = lon_span / 360 * n * tile_size
-        mid_lat_r = math.radians(0)  # упрощение — достаточно
-        px_lat = lat_span / 360 * n * tile_size
-        if px_lon < px_w * 0.75 and px_lat < px_h * 0.75:
+        # Ширина bbox в пикселях при данном зуме
+        mid_lat = (lat_min + lat_max) / 2
+        px_lon = (lon_max - lon_min) / 360 * n * tile_size
+        # Высота bbox в пикселях (меркатор)
+        def merc(la):
+            return math.log(math.tan(math.pi/4 + math.radians(la)/2))
+        px_lat = abs(merc(lat_max) - merc(lat_min)) / (2 * math.pi) * n * tile_size
+        if px_lon < px_w * 0.65 and px_lat < px_h * 0.65:
             return z
-    return 9
+    return 6
 
 
 def _draw_wind_map(ctx, pts_weather, x, y, w, h, accent, text_c, dim_c, grid_c, wind_c, gust_c, all_pts=None):
@@ -424,7 +431,7 @@ def _draw_wind_map(ctx, pts_weather, x, y, w, h, accent, text_c, dim_c, grid_c, 
     lon_span = lon_max - lon_min
 
     TILE = 256
-    zoom = _pick_zoom(lat_span, lon_span, w, h)
+    zoom = _pick_zoom(lat_min, lat_max, lon_min, lon_max, w, h)
 
     # Тайлы, покрывающие bbox
     tx0, ty0 = _lat_lon_to_tile(lat_max, lon_min, zoom)  # северо-запад
